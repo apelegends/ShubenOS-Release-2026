@@ -1,0 +1,3 @@
+#!/bin/bash
+# Ensure all chroot hooks are executable
+chmod +x config/hooks/live/*.hook.chroot 2>/dev/null || true
