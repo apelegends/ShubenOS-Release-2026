@@ -1,0 +1,106 @@
+#!/bin/bash
+# Shuben Launcher OS — Cleanup: strip MS branding, antivirus, bloat
+set -e
+echo "==> Cleanup: removing unwanted packages and branding..."
+
+# Remove antivirus (intentionally)
+apt-get remove -y --purge \
+  clamav clamav-daemon clamav-freshclam \
+  rkhunter chkrootkit \
+  apparmor apparmor-utils \
+  2>/dev/null || true
+
+# Remove GNOME/KDE branding that slips in
+apt-get remove -y --purge \
+  gnome-user-docs \
+  mate-user-guide \
+  xfce4-terminal \
+  2>/dev/null || true
+
+# Remove any leftover MS branding except Edge (we keep Edge)
+rm -f /usr/share/applications/microsoft-edge.desktop 2>/dev/null || true
+
+# Create a clean Edge launcher (custom branded)
+cat > /usr/share/applications/shuben-browser.desktop << 'EOF'
+[Desktop Entry]
+Name=Web Browser
+Comment=Browse the web
+Exec=microsoft-edge-stable %U
+Icon=microsoft-edge
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+EOF
+
+# Strip GNOME/KDE default mimetypes that we don't use
+update-alternatives --install /usr/bin/x-www-browser x-www-browser \
+  /usr/bin/microsoft-edge-stable 100 2>/dev/null || true
+update-alternatives --set x-www-browser \
+  /usr/bin/microsoft-edge-stable 2>/dev/null || true
+
+# Clean apt cache
+apt-get autoremove -y
+apt-get clean
+
+# Remove /home/user branding files
+rm -f /etc/skel/.config/user-dirs.locale
+
+# Set XDG user dirs
+cat > /etc/skel/.config/user-dirs.dirs << 'EOF'
+XDG_DESKTOP_DIR="$HOME/Desktop"
+XDG_DOWNLOAD_DIR="$HOME/Downloads"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_PICTURES_DIR="$HOME/Pictures"
+XDG_VIDEOS_DIR="$HOME/Videos"
+XDG_MUSIC_DIR="$HOME/Music"
+EOF
+
+mkdir -p /etc/skel/Desktop /etc/skel/Downloads /etc/skel/Documents
+
+# Desktop shortcut for Minecraft
+cp /usr/share/applications/shuben-minecraft.desktop \
+   /etc/skel/Desktop/ 2>/dev/null || true
+
+# Hostname
+echo "shuben-launcher" > /etc/hostname
+cat > /etc/hosts << 'EOF'
+127.0.0.1   localhost
+127.0.1.1   shuben-launcher
+::1         localhost ip6-localhost ip6-loopback
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+EOF
+
+# OS release branding
+cat > /etc/os-release << 'EOF'
+PRETTY_NAME="Shuben Launcher OS 1.0"
+NAME="Shuben Launcher OS"
+VERSION="1.0"
+VERSION_ID="1.0"
+ID=shuben-launcher
+ID_LIKE=debian
+HOME_URL="https://github.com/apelegends/shuben-launcher-os"
+SUPPORT_URL="https://github.com/apelegends/shuben-launcher-os/issues"
+BUG_REPORT_URL="https://github.com/apelegends/shuben-launcher-os/issues"
+EOF
+
+cat > /etc/issue << 'EOF'
+Shuben Launcher OS 1.0 \n \l
+EOF
+
+cat > /etc/motd << 'EOF'
+
+  ███████╗██╗  ██╗██╗   ██╗██████╗ ███████╗███╗   ██╗
+  ██╔════╝██║  ██║██║   ██║██╔══██╗██╔════╝████╗  ██║
+  ███████╗███████║██║   ██║██████╔╝█████╗  ██╔██╗ ██║
+  ╚════██║██╔══██║██║   ██║██╔══██╗██╔══╝  ██║╚██╗██║
+  ███████║██║  ██║╚██████╔╝██████╔╝███████╗██║ ╚████║
+  ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝
+  Launcher OS 1.0 — by Apelegends
+  Minecraft OS  |  Lightweight  |  Dual-boot ready
+  ⚠  NO ANTIVIRUS — by design
+
+EOF
+
+echo "==> Cleanup done."
