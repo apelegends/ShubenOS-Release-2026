@@ -1,0 +1,237 @@
+name: Build Shuben Launcher OS ISO
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            squashfs-tools \
+            xorriso \
+            isolinux \
+            syslinux-efi \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            grub-efi-ia32-bin \
+            mtools \
+            dosfstools \
+            rsync \
+            wget \
+            curl \
+            git \
+            debootstrap \
+            xz-utils \
+            genisoimage \
+            p7zip-full \
+            python3 \
+            python3-pip \
+            ovmf
+
+      - name: Download Ubuntu 22.04 base ISO
+        run: |
+          wget -q --show-progress \
+            "https://releases.ubuntu.com/22.04/ubuntu-22.04.3-live-server-amd64.iso" \
+            -O ubuntu-base.iso
+          echo "Downloaded: $(du -sh ubuntu-base.iso | cut -f1)"
+
+      - name: Extract Ubuntu ISO
+        run: |
+          mkdir -p iso-extract iso-new squashfs-mount squashfs-edit
+          sudo mount -o loop ubuntu-base.iso iso-extract
+          sudo rsync -a iso-extract/ iso-new/
+          sudo umount iso-extract
+          echo "ISO extracted"
+
+      - name: Extract squashfs
+        run: |
+          SQUASH=$(find iso-new -name "*.squashfs" | head -1)
+          echo "Squashfs: $SQUASH"
+          sudo unsquashfs -d squashfs-edit "$SQUASH"
+          echo "Squashfs extracted"
+
+      - name: Prepare chroot
+        run: |
+          sudo cp /etc/resolv.conf squashfs-edit/etc/resolv.conf
+          sudo mount --bind /dev  squashfs-edit/dev
+          sudo mount --bind /run  squashfs-edit/run
+          sudo mount -t proc  proc squashfs-edit/proc
+          sudo mount -t sysfs sys  squashfs-edit/sys
+
+      - name: Install packages in chroot
+        run: |
+          sudo chroot squashfs-edit /bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              openbox \
+              lightdm \
+              lightdm-gtk-greeter \
+              picom \
+              feh \
+              python3 \
+              python3-gi \
+              python3-gi-cairo \
+              gir1.2-gtk-3.0 \
+              gir1.2-notify-0.7 \
+              gir1.2-webkit2-4.0 \
+              python3-pil \
+              python3-requests \
+              python3-pip \
+              network-manager \
+              network-manager-gnome \
+              wpasupplicant \
+              pulseaudio \
+              pulseaudio-utils \
+              pavucontrol \
+              xorg \
+              xserver-xorg \
+              xserver-xorg-core \
+              xserver-xorg-video-all \
+              xserver-xorg-video-amdgpu \
+              xserver-xorg-video-radeon \
+              xserver-xorg-video-intel \
+              xserver-xorg-video-nouveau \
+              mesa-vulkan-drivers \
+              mesa-va-drivers \
+              libgl1-mesa-dri \
+              firmware-linux-free \
+              lxterminal \
+              pcmanfm \
+              mousepad \
+              xterm \
+              xdotool \
+              wmctrl \
+              x11-utils \
+              xdg-utils \
+              xdg-user-dirs \
+              dconf-cli \
+              gnome-keyring \
+              gvfs \
+              gvfs-backends \
+              udisks2 \
+              upower \
+              fonts-liberation \
+              fonts-noto \
+              parted \
+              gdisk \
+              dosfstools \
+              e2fsprogs \
+              rsync \
+              wget \
+              curl \
+              sudo \
+              acpid \
+              pciutils \
+              usbutils \
+              lshw \
+              inxi \
+              git \
+              unzip \
+              default-jre \
+              zenity \
+              lxappearance \
+              lxpanel \
+              engrampa \
+              eom
+            apt-get remove -y --purge clamav* apparmor* 2>/dev/null || true
+            apt-get autoremove -y
+            apt-get clean
+          "
+
+      - name: Install Microsoft Edge in chroot
+        run: |
+          sudo chroot squashfs-edit /bin/bash -c "
+            curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+              | gpg --dearmor -o /usr/share/keyrings/microsoft-edge.gpg
+            echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-edge.gpg] \
+              https://packages.microsoft.com/repos/edge stable main' \
+              > /etc/apt/sources.list.d/microsoft-edge.list
+            apt-get update -qq
+            apt-get install -y microsoft-edge-stable
+            apt-get clean
+          "
+
+      - name: Copy Shuben UI files into chroot
+        run: |
+          sudo mkdir -p squashfs-edit/usr/lib/shuben-launcher/{installer,oobe,desktop,login,minecraft,settings}
+          sudo cp shuben-ui/installer/installer.py  squashfs-edit/usr/lib/shuben-launcher/installer/
+          sudo cp shuben-ui/oobe/oobe.py             squashfs-edit/usr/lib/shuben-launcher/oobe/
+          sudo cp shuben-ui/desktop/taskbar.py       squashfs-edit/usr/lib/shuben-launcher/desktop/
+          sudo cp shuben-ui/login/pinlock.py         squashfs-edit/usr/lib/shuben-launcher/login/
+          sudo cp shuben-ui/minecraft/launcher.py    squashfs-edit/usr/lib/shuben-launcher/minecraft/
+          sudo cp shuben-ui/settings/settings.py     squashfs-edit/usr/lib/shuben-launcher/settings/
+          sudo chmod +x squashfs-edit/usr/lib/shuben-launcher/**/*.py
+
+      - name: Run setup script in chroot
+        run: |
+          sudo cp scripts/chroot-setup.sh squashfs-edit/tmp/chroot-setup.sh
+          sudo chmod +x squashfs-edit/tmp/chroot-setup.sh
+          sudo chroot squashfs-edit /bin/bash /tmp/chroot-setup.sh
+
+      - name: Unmount chroot binds
+        run: |
+          sudo umount squashfs-edit/dev  2>/dev/null || true
+          sudo umount squashfs-edit/run  2>/dev/null || true
+          sudo umount squashfs-edit/proc 2>/dev/null || true
+          sudo umount squashfs-edit/sys  2>/dev/null || true
+
+      - name: Repack squashfs
+        run: |
+          SQUASH_DEST=$(find iso-new -name "*.squashfs" | head -1)
+          sudo rm -f "$SQUASH_DEST"
+          sudo mksquashfs squashfs-edit "$SQUASH_DEST" \
+            -comp xz -Xbcj x86 -b 1M -no-progress
+          echo "Squashfs repacked: $(du -sh $SQUASH_DEST | cut -f1)"
+
+      - name: Copy Shuben GRUB/isolinux config
+        run: |
+          sudo cp configs/grub.cfg    iso-new/boot/grub/grub.cfg
+          sudo cp configs/isolinux.cfg iso-new/isolinux/isolinux.cfg 2>/dev/null || true
+
+      - name: Build final ISO
+        run: |
+          sudo xorriso -as mkisofs \
+            -iso-level 3 \
+            -full-iso9660-filenames \
+            -volid "SHUBEN-LAUNCHER-OS" \
+            -appid "Shuben Launcher OS 1.0" \
+            -publisher "Apelegends / shuben" \
+            -preparer "Shuben Build System" \
+            -eltorito-boot isolinux/isolinux.bin \
+            -eltorito-catalog isolinux/boot.cat \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            --eltorito-alt-boot \
+            -e boot/grub/efi.img \
+            -no-emul-boot \
+            -isohybrid-gpt-basdat \
+            -isohybrid-apm-hfsplus \
+            -output shuben-launcher-os-1.0-amd64.iso \
+            iso-new/
+          echo "ISO built: $(du -sh shuben-launcher-os-1.0-amd64.iso | cut -f1)"
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: shuben-launcher-os-iso
+          path: shuben-launcher-os-1.0-amd64.iso
+          retention-days: 7
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: "*.log"
+          retention-days: 3
